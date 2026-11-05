@@ -1,0 +1,33 @@
+# 运行产物
+logs/
+tp2-logs/
+*.log
+result.json
+timing_r*.json
+*_probe_result.json
+out_r*/
+
+# Python
+__pycache__/
+*.pyc
+
+# 编译产物
+*.so
+*.ko
+*.o
+*.mod
+*.mod.c
+modules.order
+Module.symvers
+
+# 权重与媒体
+*.safetensors
+*.ckpt
+*.pt
+*.mp4
+*.png
+*.svg.tmp
+
+# 本地环境
+.env
+*.local.sh

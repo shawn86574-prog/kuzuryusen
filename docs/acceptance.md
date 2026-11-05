@@ -347,3 +347,7 @@ post 相对 34.0 s 的整体变化（拆分组）：v_c 27.7（−6.3 / −18.5%
 ---
 
 数据来源：`/home/jay/tp2/logs/{v_g,v_f,v_c,v_d,v_e,v_h,v_i,v_j}/result.json` 与各 run 的 r0/r1 日志；正确性数据来自 `/tmp/check_vae_exact.py`（真实权重、同 latent）与 `/tmp/check_vae_split.py`（1–89 长度控制流）。§0–§7 数值为实测；§8 为以实测锚点线性外推的估算（±10%）；§9 的 LLM 行为本机 A/B 微基准实测（`/tmp/llm_tp2_overlap_bench.py`，仅 MLP+AR，不含 attention），Strata 基线为现网实测（`/tmp/strata_perf.py`）；§10 为既有 run 的成对比较（v_c/v_f/v_g/v_h/v_i/v_j）；§11 的开关落点行号对应 `run_tp.sh` 与 `comfyui-tp2/__init__.py` 当前版本。变化率 = 变化量 / 基线值，百分比四舍五入保留 1 位小数，个别项因取整存在 ±0.1 的尾差。
+
+---
+
+**开源仓库**：<https://github.com/shawn86574-prog/kuzuryusen>

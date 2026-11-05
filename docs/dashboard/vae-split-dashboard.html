@@ -68,6 +68,9 @@ ul.tight li{margin:6px 0;color:var(--muted)}
 ul.tight li strong{color:var(--ink)}
 .mono{font-family:var(--mono);font-size:13px}
 footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--rule);color:var(--muted);font-size:13px}
+footer .repo{margin-top:10px;color:var(--ink)}
+footer .repo a{color:var(--accent);text-decoration:none}
+footer .repo a:hover{text-decoration:underline}
 @media(max-width:820px){.kpis,.cards{grid-template-columns:1fr 1fr}h1{font-size:28px}}
 @media(max-width:560px){.kpis,.cards{grid-template-columns:1fr}}
 </style>
@@ -431,6 +434,7 @@ footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--rule);color:v
 
 <footer>
   项目代号：九頭龍閃（Kuzuryūsen）。数据来源：/home/jay/tp2/logs/{v_g,v_f,v_c,v_d,v_e,v_h,v_i,v_j}/result.json 与各 run 的 r0/r1 日志；正确性数据来自 /tmp/check_vae_exact.py（真实权重、同 latent）与 /tmp/check_vae_split.py（1–89 长度控制流）。§01–§07 所有数值为实测，未做估算填充；§08 为以实测锚点按计算量线性外推的估算（±10%），已单列标注；§09 的 LLM 行为本机 A/B 微基准实测（仅 MLP+AR，不含 attention），Strata 基线为现网实测；§10 为既有 run 的成对比较（v_c/v_f/v_g/v_h/v_i/v_j）；§11 的开关落点行号对应 run_tp.sh 与 comfyui-tp2/__init__.py 当前版本。
+  <div class="repo">开源仓库：<a href="https://github.com/shawn86574-prog/kuzuryusen" target="_blank" rel="noopener">github.com/shawn86574-prog/kuzuryusen</a></div>
 </footer>
 
 </div>

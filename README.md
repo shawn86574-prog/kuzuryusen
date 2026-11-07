@@ -15,6 +15,7 @@ scripts/                run_tp.sh / run_case.sh / bench.py / p2p_patch.py 等启
 p2p/                    内核级 PCIe P2P 打开工具（源码 + 安装脚本 + 拓扑探针）
 experiments/hip_attn/   int8 attention 实验（HIP kernel + harness，未并入主路径）
 docs/acceptance.md      验收报告（改动思路、三场景对比、上限差距、开关与失效边界）
+docs/troubleshooting.md 故障排查（world 判定、双进程启动模型、残留显存占用）
 docs/dashboard/         验收看板（自包含 HTML + ECharts）
 ```
 
@@ -80,7 +81,7 @@ COMFY_TP_VAE_SPLIT=1 bash scripts/run_tp.sh 2 8191 myrun
 - 上游 VAE 常量变更会使帧计划对账失败并报错，这是刻意设计（宁可直接失败，不产错帧）。
 - 本机环境存在既有音频流缺失问题（`avcodec_send_frame() returned 22`），基线与拆分一致，与本次改动无关。
 
-以上细节、三场景对比、上限差距与失效矩阵见 [docs/acceptance.md](docs/acceptance.md)，可视化版本见 [docs/dashboard/vae-split-dashboard.html](docs/dashboard/vae-split-dashboard.html)。
+以上细节、三场景对比、上限差距与失效矩阵见 [docs/acceptance.md](docs/acceptance.md)，可视化版本见 [docs/dashboard/vae-split-dashboard.html](docs/dashboard/vae-split-dashboard.html)；「实例在跑但没进 TP」这类启动问题见 [docs/troubleshooting.md](docs/troubleshooting.md)。
 
 ## 许可
 

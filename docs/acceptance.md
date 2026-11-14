@@ -378,6 +378,10 @@ B 与 LoRA 无关。
 | DMD `8step_turbo_pruned` | 829 | 全匹配（adaln 为 8 维 curve） | 全匹配 |
 | `T8-convert` | 208 | **50 个 adaln 键不匹配** | 同样不匹配 |
 
+> 形状匹配只代表「不会报错」，不代表「语义可用」：`Combat` 面向 hybrid 运动分支，
+> 打在 pruned 权重上形状能过但画面会崩；2D 生产固定用 `ema_pruned turbo`，
+> 要用 Combat 需换 hybrid 底模（单卡 1344×768 约 700 s/it，仅适合小分辨率）。
+
 ### 12.3 症状 B 的证据
 
 | 观察 | 内容 | 判定 |
@@ -403,7 +407,8 @@ B 与 LoRA 无关。
 | 单卡 + `ema_pruned` | 正常 | 正常 |
 | 单卡 + DMD + Combat | 正常 | 正常 |
 | TP2 + `ema_pruned` | 纯噪声 | **正常** |
-| TP2 + DMD + Combat | 纯噪声 | **正常** |
+| TP2 + DMD（不带 Combat） | 纯噪声 | **正常** |
+| TP2 + DMD + Combat | 纯噪声 | 仅形状通过；画质未验收，不建议在 pruned 上使用 |
 
 修复后：`heads 56->28` 只出现一次、`lora split keys=208/416`（DMD 为 208/828），
 **per_step 3.47 s**（双重切分时 3.98 s），显存峰值 12.0–13.7 GB/卡。

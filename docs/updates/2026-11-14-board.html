@@ -56,11 +56,16 @@
 
 <div class="board">
   <section class="col">
-    <h2>已确认 <span>2</span></h2>
+    <h2>已确认 <span>3</span></h2>
     <div class="card a">
       <h3>症状 A · LoRA 加载失败且静默</h3>
       <p><code>T8-convert</code> 的 adaln 按 2688 维全量底模训练，curve 底模是 8 维；上游 <code>except</code> 吞掉错误，界面仍显示成功。</p>
       <span class="ev">shape '[96768, 8]' is invalid for input of size 260112384</span>
+    </div>
+    <div class="card a">
+      <h3>注意 · 形状匹配 ≠ 可用</h3>
+      <p><code>Combat</code> 面向 hybrid 的运动分支，打在 pruned 权重上形状能过、画面会崩——此前那版噪声就是这么来的。2D 生产固定用 <code>ema_pruned turbo</code>；要用 Combat 必须换 hybrid 底模，单卡 1344×768 约 700 s/it，只适合小分辨率。</p>
+      <span class="ev">补丁跑通 ≠ LoRA 生效</span>
     </div>
     <div class="card b">
       <h3>症状 B · 加载成功但全噪</h3>
@@ -99,8 +104,8 @@ heads 28-&gt;14, keys 932   ← 第二次</span>
     <h2>已验证 / 遗留 <span>2</span></h2>
     <div class="card d">
       <h3>复验通过</h3>
-      <p>单卡与 TP2 在 ema、DMD+Combat 下均正常；<code>heads 56-&gt;28</code> 仅一次，per_step 3.47 s，12.0–13.7 GB/卡。</p>
-      <span class="ev">TP2 + DMD + Combat → 正常画面</span>
+      <p>单卡与 TP2 在 <code>ema_pruned</code>、DMD（不带 Combat）下均正常；<code>heads 56-&gt;28</code> 仅一次，per_step 3.47 s，12.0–13.7 GB/卡。</p>
+      <span class="ev">TP2 + ema_pruned → 正常画面</span>
     </div>
     <div class="card e">
       <h3>遗留 · 文本编码在 CPU</h3>

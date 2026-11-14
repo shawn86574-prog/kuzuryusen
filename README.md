@@ -7,7 +7,7 @@
 > 实测基线：2×Radeon RX 7900 XTX（ROCm / RCCL），832×480、124 帧、8 步。
 > 端到端 152.0 → 132.2 s（−13.0%），其中出片阶段 34.0 → 27.1–28.5 s（−16.2% ~ −20.3%），采样 8.810 → 7.616 s/step（−13.6%），像素最大绝对差 0。
 
-> **2026-11-14 修复**：TP2 出片为纯噪声的根因是 `custom_nodes` 下同时存在插件备份副本，导致切分被执行两次（`heads 56->28` 再 `28->14`）。现已移出副本并给 patch 增加幂等标记，复验通过（per_step 3.47 s，两卡各约 13 GB）。详见 troubleshooting 附录与 acceptance §12。
+> **2026-11-14 修复**：TP2 接入 LoRA 时遇到两个症状。其一，`T8-convert` 的 adaln 与 curve 形态 int8 底模不匹配，上游 `except` 静默丢弃该 LoRA，需换用 DMD / ema / Combat；其二，换用匹配 LoRA 后成片仍为纯噪声，根因是 `custom_nodes` 下残留插件备份副本、切分被执行两次（`heads 56->28` 再 `28->14`），现已移出副本并给 patch 加幂等标记。复验通过：per_step 3.47 s，两卡各约 13 GB。详见 troubleshooting 附录与 acceptance §12。
 
 ## 目录
 

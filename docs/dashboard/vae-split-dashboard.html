@@ -439,20 +439,20 @@ footer .repo a:hover{text-decoration:underline}
 </section>
 
 <section>
-  <h2><span class="num">12</span>2026-11-14 更新 · TP2 纯噪声的根因</h2>
-  <p class="lede">第二条作品在 TP2 上出的是纯噪声。逐层排除后确认：不是 LoRA 维度，也不是 Combat 不兼容，而是 <span class="mono">custom_nodes</span> 里还留着一份插件备份，被 ComfyUI 一并加载，切分补丁因此套了两层。</p>
+  <h2><span class="num">12</span>2026-11-14 更新 · LoRA 加载失败 与 出片全噪</h2>
+  <p class="lede">TP2 接入 LoRA 时先后遇到两个症状：先是 <span class="mono">T8-convert</span> 的 adaln 与 curve 形态底模不匹配、加载被静默丢弃；换成形状匹配的 LoRA 后，成片又变成纯噪声。前者是 LoRA 文件的问题，后者是 <span class="mono">custom_nodes</span> 里残留了一份插件备份、切分被执行两次。</p>
   <div class="cards">
     <div class="card">
-      <div class="tag">表象</div>
-      <h4>TP2 全噪声，单卡正常</h4>
-      <p>同一 seed、同一 LoRA：8188 单卡画质正常，8191/8192 出片是静态噪点；两个 rank 的成片 md5 完全一致。</p>
-      <div class="gain">两侧同步 ≠ 切分正确</div>
+      <div class="tag">症状 A</div>
+      <h4>LoRA 加载失败，且不报错中断</h4>
+      <p><span class="mono">shape '[96768, 8]' is invalid for input of size 260112384</span>。<span class="mono">T8-convert</span> 的 adaln 按 2688 维全量底模训练，curve 底模是 8 维；上游 <span class="mono">except</span> 吞掉错误后继续，界面显示加载成功，实际 50 个 adaln 键被丢弃。</p>
+      <div class="gain">换 DMD / ema / Combat 即可</div>
     </div>
     <div class="card">
-      <div class="tag">排除</div>
-      <h4>不带 LoRA 仍然噪声</h4>
-      <p>TP2 去掉全部 LoRA、跑 20 步，输出依旧为噪声；至此可以排除 LoRA 补丁与 Combat 维度假设。</p>
-      <div class="gain">范围收窄到 TP 核心</div>
+      <div class="tag">症状 B</div>
+      <h4>加载成功，出片全是噪点</h4>
+      <p>同 seed、同 LoRA，8188 单卡正常，TP2 是静态噪点；换 ema、甚至完全不挂 LoRA 依然噪声。两个 rank 成片 md5 一致：两侧同步，但同步的是同一份错误结果。</p>
+      <div class="gain">与 LoRA 无关</div>
     </div>
     <div class="card">
       <div class="tag">根因</div>

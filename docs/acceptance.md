@@ -348,15 +348,37 @@ post 相对 34.0 s 的整体变化（拆分组）：v_c 27.7（−6.3 / −18.5%
 
 ---
 
-## 12. 2026-11-14 更新 · TP2 纯噪声的根因与修复后复验
+## 12. 2026-11-14 更新 · TP2 下 LoRA 加载失败与出片全噪
 
-### 12.1 一句话
+### 12.1 两个症状，别混为一谈
 
-第二条作品在 TP2 上出的是纯噪声。根因不是 LoRA 维度、也不是 Combat 不兼容，而是
-`custom_nodes` 里同时存在 `comfyui-tp2` 和它的 11-07 备份目录，ComfyUI 把两个都当插件加载，
-同一套切分补丁被套了两层，qkv 头数从 56 切成 28 再切成 14。
+| 症状 | 表现 | 归属 |
+|---|---|---|
+| **A. LoRA 加载失败** | 控制台报 `shape '[96768, 8]' is invalid for input of size 260112384`；该 LoRA 实际未生效，被上游 `except` 静默丢弃 | LoRA 与底模形态不匹配 |
+| **B. 加载成功但全噪** | 换用形状匹配的 LoRA（甚至完全不挂 LoRA）后，TP2 成片仍是静态噪点；单卡同配置正常 | TP2 切分被执行两次 |
 
-### 12.2 证据
+两者时间上前后脚出现，很容易被归成「TP2 不支持 LoRA」。实际是两条独立问题：A 只能换 LoRA 解决，
+B 与 LoRA 无关。
+
+### 12.2 症状 A：为什么 T8-convert 加载不上
+
+`minimax_h3_turbo_v4_step600_comfyui_T8-convert.safetensors` 的 adaln 层是按 **2688 维全量底模**
+训练的（`lora_A [16, 2688]`），而 `ref2va/hybrid int8` 底模是 **curve 形态**（`adaln_t_table [1025, 8]`，
+`adaln_proj.weight [96768, 8]`）。`B@A` 得到 `[96768, 2688]`，无法 reshape 成 `[96768, 8]`；上游
+`comfy/weight_adapter/lora.py` 在 `except` 里只记一条 error 就继续，于是「看起来加载了、
+其实这 50 个键被丢掉」。
+
+**不要靠跳过形状检查去硬打补丁**——那会把错维度的 delta 塞进权重，比丢弃更糟。
+解法是换用形状匹配的 LoRA（本机已备）：
+
+| LoRA | 键数 | 与 `ref2va int8` | 与 `hybrid int8` |
+|---|---|---|---|
+| `ema_pruned_comfyui` | 417 | 全匹配 | 全匹配 |
+| `H3_Combat_V2` | 417 | 全匹配（0 不匹配） | 全匹配 |
+| DMD `8step_turbo_pruned` | 829 | 全匹配（adaln 为 8 维 curve） | 全匹配 |
+| `T8-convert` | 208 | **50 个 adaln 键不匹配** | 同样不匹配 |
+
+### 12.3 症状 B 的证据
 
 | 观察 | 内容 | 判定 |
 |---|---|---|
@@ -366,16 +388,7 @@ post 相对 34.0 s 的整体变化（拆分组）：v_c 27.7（−6.3 / −18.5%
 | 目录 | `custom_nodes/` 下除 `comfyui-tp2` 外还有 `comfyui-tp2.bak-377line-11071942` | 两个模块各自 monkeypatch |
 | 两 rank md5 | 完全一致 | 两卡同步，但同步的是同一份错误结果 |
 
-LoRA 侧同时做了形状体检，结论是**都不背锅**：
-
-| LoRA | 键数 | 与 `ref2va int8` 底模 | 与 `hybrid int8` 底模 |
-|---|---|---|---|
-| `ema_pruned_comfyui` | 417 | 全匹配 | 全匹配 |
-| `H3_Combat_V2` | 417 | 全匹配（0 不匹配） | 全匹配 |
-| DMD `8step_turbo_pruned` | 829 | 全匹配（含 adaln 的 8 维 curve 形态） | 全匹配 |
-| `T8-convert`（未采用） | 208 | 50 个 adaln 键不匹配（按 2688 维全量底模制作） | 同样不匹配 |
-
-### 12.3 修复
+### 12.4 修复
 
 1. 备份目录移出 `custom_nodes`（`/home/jay/tp2/backups/`）；
 2. `load_diffusion_model_state_dict` 与 `load_lora_for_models` 两处 patch 增加
@@ -383,7 +396,7 @@ LoRA 侧同时做了形状体检，结论是**都不背锅**：
 3. `bench.py` 支持 `--lora ""` 真无 LoRA 路径（原先会误把音频 VAE 名当 LoRA），并补齐
    `--lora2`、`BENCH_FFN_CHUNKS`、`BENCH_ATTN_HEAD_CHUNKS`、轮询超时容错。
 
-### 12.4 复验矩阵（832×480 / 56 帧 / 8 步 / seed 145）
+### 12.5 复验矩阵（832×480 / 56 帧 / 8 步 / seed 145）
 
 | 配置 | 修复前 | 修复后 |
 |---|---|---|
@@ -395,7 +408,7 @@ LoRA 侧同时做了形状体检，结论是**都不背锅**：
 修复后：`heads 56->28` 只出现一次、`lora split keys=208/416`（DMD 为 208/828），
 **per_step 3.47 s**（双重切分时 3.98 s），显存峰值 12.0–13.7 GB/卡。
 
-### 12.5 在线确认（生产运行时）
+### 12.6 在线确认（生产运行时）
 
 | 检查 | 期望 |
 |---|---|

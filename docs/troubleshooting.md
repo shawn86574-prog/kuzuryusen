@@ -61,15 +61,37 @@ TP=1 的实例从头到尾就没在 TP 模式下运行过**——它打的是 `w
 
 ---
 
-# 附 · TP=2 输出纯噪声：插件被加载两次导致权重双重切分
+# 附 · TP2 下的 LoRA：加载失败 与 出片全噪 是两回事
 
-> 记录日期：2026-11-14。同一套配置单卡正常、TP2 出片全噪声，误判方向是「LoRA 维度不匹配」。
+> 记录日期：2026-11-14。TP2 上线 LoRA 时先后遇到两个症状，很容易被合并成「TP2 不支持 LoRA」，
+> 实际是两条独立问题：一条在 LoRA 文件本身，一条在 TP2 切分。
 
-## 现象
+## 症状 A：LoRA 加载失败（而且没有报错中断）
 
-TP2 双实例跑 DMD + Combat，成片为纯噪声（抽帧全屏静态噪点），换 `ema_pruned` 甚至完全不带
-LoRA 依然噪声；同一工作流、同一 seed 在 8188 单卡上画质正常。两个 rank 的输出 md5 一致，
-说明两侧算的是同一份错误结果，而不是某一侧坏了。
+```
+shape '[96768, 8]' is invalid for input of size 260112384
+ERROR lora key not loaded: diffusion_model.blocks.0.adaln_proj.linear.weight
+```
+
+- 触发文件：`minimax_h3_turbo_v4_step600_comfyui_T8-convert.safetensors`
+- 原因：它的 adaln 按 **2688 维全量底模** 训练（`lora_A [16, 2688]`），而 `ref2va/hybrid int8`
+  底模是 **curve 形态**（`adaln_t_table [1025, 8]`、`adaln_proj.weight [96768, 8]`），
+  `B@A` 得到 `[96768, 2688]`，reshape 不成 `[96768, 8]`
+- 关键点：上游 `comfy/weight_adapter/lora.py` 用 `try/except` 包住，**只打一条 error 就继续**，
+  所以界面上「加载成功」，实际这 50 个 adaln 键被静默丢弃
+- 正确解法：**换形状匹配的 LoRA**，不要改代码去跳过形状检查（那会把错维度 delta 硬塞进权重）
+
+| LoRA | 键数 | `ref2va int8` | `hybrid int8` |
+|---|---|---|---|
+| `ema_pruned_comfyui` | 417 | 全匹配 | 全匹配 |
+| `H3_Combat_V2` | 417 | 全匹配 | 全匹配 |
+| DMD `8step_turbo_pruned` | 829 | 全匹配（adaln 8 维 curve） | 全匹配 |
+| `T8-convert` | 208 | 50 个 adaln 键不匹配 | 同样不匹配 |
+
+## 症状 B：换成匹配的 LoRA 后，成片仍是纯噪声
+
+同一套配置单卡正常、TP2 抽帧全屏静态噪点；换 `ema_pruned` 甚至完全不挂 LoRA 依然噪声。
+两个 rank 的成片 md5 一致——说明两侧算的是同一份错误结果，而不是某一侧坏了。
 
 ## 根因：`custom_nodes` 里有两个插件副本
 
@@ -125,7 +147,11 @@ ls custom_nodes | grep -i tp2        # 只应有 comfyui-tp2 一个条目
 
 ## 教训
 
-1. **插件目录只放一个副本**。备份放到仓库或 `~/backups`，不要留在 `custom_nodes`。
-2. **「两侧 md5 一致」不等于正确**。它只能证明两卡同步，不证明切分正确；画质验收必须抽帧。
+1. **LoRA 加载失败是静默的**。上游 `except` 吞掉 reshape 错误，界面照样显示成功；必须查
+   `ERROR {name} {key}` 计数，或先做「LoRA 键形状 vs 底模权重形状」体检。
+2. **不要把两个症状合并归因**。「加载失败」是文件形态问题，「加载成功但全噪」是 TP 切分问题，
+   混在一起就会得出「TP2 不支持 LoRA」的错误结论。
 3. **先排除 LoRA 再怀疑 TP**：本次不带 LoRA 仍噪声，一步就把范围收窄到核心切分。
-4. **切分次数可直接量化**：`heads 56->28` 只应出现一次，日志里数一下即可判定。
+4. **插件目录只放一个副本**。备份放到仓库或 `~/backups`，不要留在 `custom_nodes`。
+5. **「两侧 md5 一致」不等于正确**。它只能证明两卡同步，不证明切分正确；画质验收必须抽帧。
+6. **切分次数可直接量化**：`heads 56->28` 只应出现一次，日志里数一下即可判定。

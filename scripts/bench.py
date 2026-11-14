@@ -47,8 +47,6 @@ class VramMon(threading.Thread):
 def build_wf(a, port=None):
     wf = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": a.unet, "weight_dtype": "default"}},
-        "2": {"class_type": "LoraLoaderModelOnly",
-              "inputs": {"model": ["1", 0], "lora_name": a.lora, "strength_model": a.lora_strength}},
         "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": a.clip, "type": "minimax", "device": os.environ.get("BENCH_CLIP_DEVICE", "default")}},
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": a.vae}},
         "5": {"class_type": "VAELoader", "inputs": {"vae_name": a.audio_vae}},
@@ -69,6 +67,30 @@ def build_wf(a, port=None):
         "15": {"class_type": "SaveVideo",
                "inputs": {"video": ["14", 0], "filename_prefix": "tp2/out", "format": "auto"}},
     }
+    ffn_chunks = int(os.environ.get("BENCH_FFN_CHUNKS", "0") or 0)
+    head_chunks = int(os.environ.get("BENCH_ATTN_HEAD_CHUNKS", "0") or 0)
+    model_src = ["1", 0]
+    if a.lora and a.lora.lower() != "none":
+        wf["2"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": model_src, "lora_name": a.lora,
+                              "strength_model": a.lora_strength}}
+        model_src = ["2", 0]
+    if ffn_chunks > 1:
+        wf["17"] = {"class_type": "MiniMaxChunkFeedForward",
+                    "inputs": {"model": model_src, "chunks": ffn_chunks, "seq_threshold": 4096}}
+        model_src = ["17", 0]
+    if head_chunks > 1:
+        wf["18"] = {"class_type": "MiniMaxLowVRAMAttention",
+                    "inputs": {"model": model_src, "head_chunks": head_chunks}}
+        model_src = ["18", 0]
+    if a.lora2:
+        wf["19"] = {"class_type": "LoraLoaderModelOnly",
+                    "inputs": {"model": model_src, "lora_name": a.lora2,
+                               "strength_model": a.lora2_strength}}
+        model_src = ["19", 0]
+    wf["8"]["inputs"]["model"] = model_src
+    wf["10"]["inputs"]["model"] = model_src
+
     if a.dump_dir:
         os.makedirs(a.dump_dir, exist_ok=True)
         wf["16"] = {"class_type": "TP2DumpLatent",
@@ -86,9 +108,15 @@ def submit(port, wf):
 
 
 def wait_done(port, pid, timeout=7200):
+    poll_timeout = float(os.environ.get("BENCH_POLL_TIMEOUT", "10"))
     t0 = time.time()
     while time.time() - t0 < timeout:
-        h = requests.get(f"http://127.0.0.1:{port}/history/{pid}", timeout=10).json()
+        try:
+            h = requests.get(f"http://127.0.0.1:{port}/history/{pid}", timeout=poll_timeout).json()
+        except requests.exceptions.RequestException:
+            # TP2 下 rank1 可能被 collective 阻塞，单次轮询超时不代表任务失败
+            time.sleep(2.0)
+            continue
         if pid in h:
             entry = h[pid]
             st = entry.get("status", {})
@@ -140,6 +168,8 @@ def main():
     ap.add_argument("--lora", default="Minimax_H3_fp32_audio_vae.safetensors.tmp")
     ap.add_argument("--no-lora", action="store_true")
     ap.add_argument("--lora-strength", type=float, default=1.0)
+    ap.add_argument("--lora2", default="")
+    ap.add_argument("--lora2-strength", type=float, default=1.0)
     ap.add_argument("--width", type=int, default=832)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--frames", type=int, default=124)
@@ -151,7 +181,7 @@ def main():
     ap.add_argument("--dump-dir", default="")
     ap.add_argument("--vae-split", action="store_true",
                     help="节点 12 换成 TP2VAEDecodeSplit（需实例 COMFY_TP_VAE_SPLIT=1）")
-    ap.add_argument("--result", default="result.json")
+    ap.add_argument("--result", default="/home/jay/tp2/logs/result.json")
     a = ap.parse_args()
 
     wfs = [build_wf(a, p) for p in a.ports]

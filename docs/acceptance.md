@@ -348,7 +348,68 @@ post 相对 34.0 s 的整体变化（拆分组）：v_c 27.7（−6.3 / −18.5%
 
 ---
 
-数据来源：`/home/jay/tp2/logs/{v_g,v_f,v_c,v_d,v_e,v_h,v_i,v_j}/result.json` 与各 run 的 r0/r1 日志；正确性数据来自 `/tmp/check_vae_exact.py`（真实权重、同 latent）与 `/tmp/check_vae_split.py`（1–89 长度控制流）。§0–§7 数值为实测；§8 为以实测锚点线性外推的估算（±10%）；§9 的 LLM 行为本机 A/B 微基准实测（`/tmp/llm_tp2_overlap_bench.py`，仅 MLP+AR，不含 attention），Strata 基线为现网实测（`/tmp/strata_perf.py`）；§10 为既有 run 的成对比较（v_c/v_f/v_g/v_h/v_i/v_j）；§11 的开关落点行号对应 `run_tp.sh` 与 `comfyui-tp2/__init__.py` 当前版本。变化率 = 变化量 / 基线值，百分比四舍五入保留 1 位小数，个别项因取整存在 ±0.1 的尾差。
+## 12. 2026-11-14 更新 · TP2 纯噪声的根因与修复后复验
+
+### 12.1 一句话
+
+第二条作品在 TP2 上出的是纯噪声。根因不是 LoRA 维度、也不是 Combat 不兼容，而是
+`custom_nodes` 里同时存在 `comfyui-tp2` 和它的 11-07 备份目录，ComfyUI 把两个都当插件加载，
+同一套切分补丁被套了两层，qkv 头数从 56 切成 28 再切成 14。
+
+### 12.2 证据
+
+| 观察 | 内容 | 判定 |
+|---|---|---|
+| 单卡 vs TP2 | 同 seed、同 LoRA，8188 单卡正常，TP2 全噪声 | 问题在 TP 路径 |
+| 去掉 LoRA | TP2 无 LoRA、20 步，仍为噪声 | 与 LoRA 无关 |
+| 日志 | `heads 56->28` 后又 `heads 28->14`，同一次加载两行 | 权重被切两次 |
+| 目录 | `custom_nodes/` 下除 `comfyui-tp2` 外还有 `comfyui-tp2.bak-377line-11071942` | 两个模块各自 monkeypatch |
+| 两 rank md5 | 完全一致 | 两卡同步，但同步的是同一份错误结果 |
+
+LoRA 侧同时做了形状体检，结论是**都不背锅**：
+
+| LoRA | 键数 | 与 `ref2va int8` 底模 | 与 `hybrid int8` 底模 |
+|---|---|---|---|
+| `ema_pruned_comfyui` | 417 | 全匹配 | 全匹配 |
+| `H3_Combat_V2` | 417 | 全匹配（0 不匹配） | 全匹配 |
+| DMD `8step_turbo_pruned` | 829 | 全匹配（含 adaln 的 8 维 curve 形态） | 全匹配 |
+| `T8-convert`（未采用） | 208 | 50 个 adaln 键不匹配（按 2688 维全量底模制作） | 同样不匹配 |
+
+### 12.3 修复
+
+1. 备份目录移出 `custom_nodes`（`/home/jay/tp2/backups/`）；
+2. `load_diffusion_model_state_dict` 与 `load_lora_for_models` 两处 patch 增加
+   `comfy.sd._tp2_*_patched` 幂等标记，跨模块副本只生效一次；
+3. `bench.py` 支持 `--lora ""` 真无 LoRA 路径（原先会误把音频 VAE 名当 LoRA），并补齐
+   `--lora2`、`BENCH_FFN_CHUNKS`、`BENCH_ATTN_HEAD_CHUNKS`、轮询超时容错。
+
+### 12.4 复验矩阵（832×480 / 56 帧 / 8 步 / seed 145）
+
+| 配置 | 修复前 | 修复后 |
+|---|---|---|
+| 单卡 + `ema_pruned` | 正常 | 正常 |
+| 单卡 + DMD + Combat | 正常 | 正常 |
+| TP2 + `ema_pruned` | 纯噪声 | **正常** |
+| TP2 + DMD + Combat | 纯噪声 | **正常** |
+
+修复后：`heads 56->28` 只出现一次、`lora split keys=208/416`（DMD 为 208/828），
+**per_step 3.47 s**（双重切分时 3.98 s），显存峰值 12.0–13.7 GB/卡。
+
+### 12.5 在线确认（生产运行时）
+
+| 检查 | 期望 |
+|---|---|
+| `rocm-smi --showuse` | 两张卡均 100% |
+| `rocm-smi --showmeminfo vram` | 各约 13 GB |
+| `curl :8191/queue` 与 `:8192/queue` | prompt_id 不同，但工作流图 hash 相同 |
+| 两侧日志 | 各出现一次 `Model MiniMaxH3 ... 208 patches attached` |
+
+> 前置阶段 GPU 为 0% 属正常：32B 文本编码器跑在 CPU（单进程约 25.9 GB 内存），
+> 这一段是当前最大固定开销，后续优化项。
+
+---
+
+数据来源：`/home/jay/tp2/logs/{v_g,v_f,v_c,v_d,v_e,v_h,v_i,v_j}/result.json` 与各 run 的 r0/r1 日志；正确性数据来自 `/tmp/check_vae_exact.py`（真实权重、同 latent）与 `/tmp/check_vae_split.py`（1–89 长度控制流）。§0–§7 数值为实测；§8 为以实测锚点线性外推的估算（±10%）；§9 的 LLM 行为本机 A/B 微基准实测（`/tmp/llm_tp2_overlap_bench.py`，仅 MLP+AR，不含 attention），Strata 基线为现网实测（`/tmp/strata_perf.py`）；§10 为既有 run 的成对比较（v_c/v_f/v_g/v_h/v_i/v_j）；§11 的开关落点行号对应 `run_tp.sh` 与 `comfyui-tp2/__init__.py` 当前版本；§12 为 2026-11-14 的故障复验，数据来自 `tp2/logs/{h3iso,h3iso2,h3fix}` 与 8188 单卡对照 run。变化率 = 变化量 / 基线值，百分比四舍五入保留 1 位小数，个别项因取整存在 ±0.1 的尾差。
 
 ---
 

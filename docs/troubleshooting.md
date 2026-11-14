@@ -58,3 +58,74 @@ TP=1 的实例从头到尾就没在 TP 模式下运行过**——它打的是 `w
 本机 8188 单实例日志（`/tmp/comfy_launch3.log`）、TP=2 验收日志
 （`tp2/logs/amd/r0.log`、`r1.log`）、`AutoLaunch_ComfyUI.sh`、`scripts/run_tp.sh`、
 `comfyui-tp2/__init__.py`。s/it 与 s/step 为各自日志实测；倍数按 39.6~60 ÷ 7.614 计算。
+
+---
+
+# 附 · TP=2 输出纯噪声：插件被加载两次导致权重双重切分
+
+> 记录日期：2026-11-14。同一套配置单卡正常、TP2 出片全噪声，误判方向是「LoRA 维度不匹配」。
+
+## 现象
+
+TP2 双实例跑 DMD + Combat，成片为纯噪声（抽帧全屏静态噪点），换 `ema_pruned` 甚至完全不带
+LoRA 依然噪声；同一工作流、同一 seed 在 8188 单卡上画质正常。两个 rank 的输出 md5 一致，
+说明两侧算的是同一份错误结果，而不是某一侧坏了。
+
+## 根因：`custom_nodes` 里有两个插件副本
+
+```
+custom_nodes/
+├── comfyui-tp2                            ← 正在用的 832 行版本
+└── comfyui-tp2.bak-377line-11071942       ← 11-07 的备份，同样会被加载
+```
+
+ComfyUI 会把 `custom_nodes` 下每个子目录都当插件导入（只跳过 `.` 开头和 `__pycache__`），
+于是同一套 monkeypatch 被执行两次：
+
+```
+[tp2] rank0 state_dict split: heads 56->28, keys 932
+[tp2] rank0 state_dict split: heads 28->14, keys 932   ← 第二次，head 只剩 1/4
+```
+
+qkv 头数被切到 14（应为 28），注意力彻底错位，输出必然是噪声。原来的
+`_split_ids = set()` 只按 `id(sd)` 去重，两个模块实例各有自己的 set，挡不住。
+
+## 修复
+
+1. 备份移出插件目录：`mv custom_nodes/comfyui-tp2.bak-* /home/jay/tp2/backups/`
+2. 两处 patch 加幂等标记（`comfyui-tp2/__init__.py`）：
+
+```python
+if not getattr(comfy.sd, "_tp2_state_dict_patched", False):
+    comfy.sd.load_diffusion_model_state_dict = _tp_load_diffusion_model_state_dict
+    comfy.sd._tp2_state_dict_patched = True
+```
+
+LoRA 那处同理（`_tp2_lora_patched`）。标记挂在 `comfy.sd` 上，跨模块副本共享。
+
+## 判定口径（三行）
+
+```bash
+grep 'state_dict split' r0.log        # 只能出现一次 heads 56->28；出现两次即中招
+grep 'lora split keys' r0.log         # 208/416（单 LoRA）或 208/828（DMD），各一次
+ls custom_nodes | grep -i tp2        # 只应有 comfyui-tp2 一个条目
+```
+
+## 复验矩阵（832×480 / 56 帧，seed 145）
+
+| 配置 | 修复前 | 修复后 |
+|---|---|---|
+| 单卡 + ema_pruned | 正常 | 正常 |
+| 单卡 + DMD + Combat | 正常 | 正常 |
+| TP2 + ema_pruned | **纯噪声** | 正常 |
+| TP2 + DMD + Combat | **纯噪声** | 正常 |
+| TP2 无 LoRA（20 步） | **纯噪声** | — |
+
+修复后 per_step 3.47 s（双重切分时为 3.98 s，切多了反而更慢），显存 12.0–13.7 GB/卡。
+
+## 教训
+
+1. **插件目录只放一个副本**。备份放到仓库或 `~/backups`，不要留在 `custom_nodes`。
+2. **「两侧 md5 一致」不等于正确**。它只能证明两卡同步，不证明切分正确；画质验收必须抽帧。
+3. **先排除 LoRA 再怀疑 TP**：本次不带 LoRA 仍噪声，一步就把范围收窄到核心切分。
+4. **切分次数可直接量化**：`heads 56->28` 只应出现一次，日志里数一下即可判定。

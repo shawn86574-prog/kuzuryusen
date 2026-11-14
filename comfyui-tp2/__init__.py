@@ -173,7 +173,11 @@ def _tp_load_diffusion_model_state_dict(sd, model_options={}, metadata=None, dis
                       disable_dynamic=disable_dynamic)
 
 
-comfy.sd.load_diffusion_model_state_dict = _tp_load_diffusion_model_state_dict
+# 幂等保护：custom_nodes 下若存在多份插件副本，两个模块会各自包一层，导致重复切分
+# （heads 56->28 再 28->14，输出纯噪声）。用 comfy.sd 上的标记保证只包一次。
+if not getattr(comfy.sd, "_tp2_state_dict_patched", False):
+    comfy.sd.load_diffusion_model_state_dict = _tp_load_diffusion_model_state_dict
+    comfy.sd._tp2_state_dict_patched = True
 
 
 # ---------------------------------------------------------------- LoRA 切分
@@ -215,7 +219,9 @@ def _tp_load_lora_for_models(model, clip, lora, strength_model, strength_clip,
     return _orig_load_lora(model, clip, lora, strength_model, strength_clip, **kwargs)
 
 
-comfy.sd.load_lora_for_models = _tp_load_lora_for_models
+if not getattr(comfy.sd, "_tp2_lora_patched", False):
+    comfy.sd.load_lora_for_models = _tp_load_lora_for_models
+    comfy.sd._tp2_lora_patched = True
 
 
 # ---------------------------------------------------------------- all_reduce

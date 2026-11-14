@@ -438,8 +438,57 @@ footer .repo a:hover{text-decoration:underline}
   </ul>
 </section>
 
+<section>
+  <h2><span class="num">12</span>2026-11-14 更新 · TP2 纯噪声的根因</h2>
+  <p class="lede">第二条作品在 TP2 上出的是纯噪声。逐层排除后确认：不是 LoRA 维度，也不是 Combat 不兼容，而是 <span class="mono">custom_nodes</span> 里还留着一份插件备份，被 ComfyUI 一并加载，切分补丁因此套了两层。</p>
+  <div class="cards">
+    <div class="card">
+      <div class="tag">表象</div>
+      <h4>TP2 全噪声，单卡正常</h4>
+      <p>同一 seed、同一 LoRA：8188 单卡画质正常，8191/8192 出片是静态噪点；两个 rank 的成片 md5 完全一致。</p>
+      <div class="gain">两侧同步 ≠ 切分正确</div>
+    </div>
+    <div class="card">
+      <div class="tag">排除</div>
+      <h4>不带 LoRA 仍然噪声</h4>
+      <p>TP2 去掉全部 LoRA、跑 20 步，输出依旧为噪声；至此可以排除 LoRA 补丁与 Combat 维度假设。</p>
+      <div class="gain">范围收窄到 TP 核心</div>
+    </div>
+    <div class="card">
+      <div class="tag">根因</div>
+      <h4>切分被执行了两次</h4>
+      <p>日志同一次加载出现两行：<span class="mono">heads 56-&gt;28</span> 后又 <span class="mono">28-&gt;14</span>。原因是 <span class="mono">comfyui-tp2.bak-377line-11071942</span> 与正式目录同时被当插件导入，两个模块各自 monkeypatch 一次。</p>
+      <div class="gain">qkv 头数只剩应有的 1/4</div>
+    </div>
+    <div class="card">
+      <div class="tag">修复</div>
+      <h4>移出备份 + 幂等标记</h4>
+      <p>备份移到 <span class="mono">/home/jay/tp2/backups/</span>；两处 patch 增加 <span class="mono">comfy.sd._tp2_*_patched</span> 标记，跨模块副本只生效一次。</p>
+      <div class="gain">per_step 3.98 → 3.47 s</div>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>配置（832×480 / 56 帧 / seed 145）</th><th>修复前</th><th>修复后</th></tr></thead>
+      <tbody>
+        <tr><td>单卡 + ema_pruned</td><td class="num">正常</td><td class="num">正常</td></tr>
+        <tr><td>单卡 + DMD + Combat</td><td class="num">正常</td><td class="num">正常</td></tr>
+        <tr class="hl"><td>TP2 + ema_pruned</td><td class="num neg">纯噪声</td><td class="num pos">正常</td></tr>
+        <tr class="hl"><td>TP2 + DMD + Combat</td><td class="num neg">纯噪声</td><td class="num pos">正常</td></tr>
+        <tr><td>TP2 无 LoRA（20 步）</td><td class="num neg">纯噪声</td><td class="num">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="tight">
+    <li><strong>判定三行：</strong><span class="mono">grep 'state_dict split' r0.log</span> 只应出现一次；<span class="mono">grep 'lora split keys'</span> 各一次；<span class="mono">ls custom_nodes | grep -i tp2</span> 只应有一个条目。</li>
+    <li><strong>LoRA 形状体检：</strong>ema_pruned（417 键）、Combat（417 键）、DMD（829 键）对 <span class="mono">ref2va int8</span> 与 <span class="mono">hybrid int8</span> 两个底模均全匹配；<span class="mono">T8-convert</span> 有 50 个 adaln 键不匹配（按 2688 维全量底模制作），未采用。</li>
+    <li><strong>在线确认：</strong>两卡均 100%、各约 13 GB；8191 与 8192 的 prompt_id 不同但工作流图 hash 相同；两侧日志各一次 <span class="mono">208 patches attached</span>。</li>
+    <li><strong>前置阶段 GPU 0% 属正常：</strong>32B 文本编码器在 CPU 上跑（单进程约 25.9 GB 内存），这是当前最大的固定开销，也是下一步优化目标。</li>
+  </ul>
+</section>
+
 <footer>
-  项目代号：九頭龍閃（Kuzuryūsen）。数据来源：/home/jay/tp2/logs/{v_g,v_f,v_c,v_d,v_e,v_h,v_i,v_j}/result.json 与各 run 的 r0/r1 日志；正确性数据来自 /tmp/check_vae_exact.py（真实权重、同 latent）与 /tmp/check_vae_split.py（1–89 长度控制流）。§01–§07 所有数值为实测，未做估算填充；§08 为以实测锚点按计算量线性外推的估算（±10%），已单列标注；§09 的 LLM 行为本机 A/B 微基准实测（仅 MLP+AR，不含 attention），Strata 基线为现网实测；§10 为既有 run 的成对比较（v_c/v_f/v_g/v_h/v_i/v_j）；§11 的开关落点行号对应 run_tp.sh 与 comfyui-tp2/__init__.py 当前版本。
+  项目代号：九頭龍閃（Kuzuryūsen）。数据来源：/home/jay/tp2/logs/{v_g,v_f,v_c,v_d,v_e,v_h,v_i,v_j}/result.json 与各 run 的 r0/r1 日志；正确性数据来自 /tmp/check_vae_exact.py（真实权重、同 latent）与 /tmp/check_vae_split.py（1–89 长度控制流）。§01–§07 所有数值为实测，未做估算填充；§08 为以实测锚点按计算量线性外推的估算（±10%），已单列标注；§09 的 LLM 行为本机 A/B 微基准实测（仅 MLP+AR，不含 attention），Strata 基线为现网实测；§10 为既有 run 的成对比较（v_c/v_f/v_g/v_h/v_i/v_j）；§11 的开关落点行号对应 run_tp.sh 与 comfyui-tp2/__init__.py 当前版本；§12 为 2026-11-14 的故障复验（tp2/logs/{h3iso,h3iso2,h3fix} 与 8188 单卡对照 run），成片结论以抽帧目视为准。
   <div class="repo">开源仓库：<a href="https://github.com/shawn86574-prog/kuzuryusen" target="_blank" rel="noopener">github.com/shawn86574-prog/kuzuryusen</a></div>
 </footer>
 

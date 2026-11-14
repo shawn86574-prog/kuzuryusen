@@ -7,6 +7,8 @@
 > 实测基线：2×Radeon RX 7900 XTX（ROCm / RCCL），832×480、124 帧、8 步。
 > 端到端 152.0 → 132.2 s（−13.0%），其中出片阶段 34.0 → 27.1–28.5 s（−16.2% ~ −20.3%），采样 8.810 → 7.616 s/step（−13.6%），像素最大绝对差 0。
 
+> **2026-11-14 修复**：TP2 出片为纯噪声的根因是 `custom_nodes` 下同时存在插件备份副本，导致切分被执行两次（`heads 56->28` 再 `28->14`）。现已移出副本并给 patch 增加幂等标记，复验通过（per_step 3.47 s，两卡各约 13 GB）。详见 troubleshooting 附录与 acceptance §12。
+
 ## 目录
 
 ```
@@ -15,7 +17,7 @@ scripts/                run_tp.sh / run_case.sh / bench.py / p2p_patch.py 等启
 p2p/                    内核级 PCIe P2P 打开工具（源码 + 安装脚本 + 拓扑探针）
 experiments/hip_attn/   int8 attention 实验（HIP kernel + harness，未并入主路径）
 docs/acceptance.md      验收报告（改动思路、三场景对比、上限差距、开关与失效边界）
-docs/troubleshooting.md 故障排查（world 判定、双进程启动模型、残留显存占用）
+docs/troubleshooting.md 故障排查（world 判定、双进程启动模型、残留显存、插件重复加载导致纯噪声）
 docs/dashboard/         验收看板（自包含 HTML + ECharts）
 ```
 
